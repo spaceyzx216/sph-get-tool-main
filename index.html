@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>视频号文案提取助手</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Marked.js for Markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        /* 思考中动画样式 */
+        .typing-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 12px;
+        }
+        
+        .typing-indicator .dot {
+            width: 8px;
+            height: 8px;
+            background: linear-gradient(135deg, #9333ea, #6366f1);
+            border-radius: 50%;
+            animation: typingBounce 1.4s infinite ease-in-out both;
+        }
+        
+        .typing-indicator .dot:nth-child(1) {
+            animation-delay: -0.32s;
+        }
+        
+        .typing-indicator .dot:nth-child(2) {
+            animation-delay: -0.16s;
+        }
+        
+        .typing-indicator .dot:nth-child(3) {
+            animation-delay: 0s;
+        }
+        
+        @keyframes typingBounce {
+            0%, 80%, 100% {
+                transform: scale(0.6);
+                opacity: 0.5;
+            }
+            40% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+        
+        /* 思考气泡入场动画 */
+        .thinking-bubble {
+            animation: bubbleFadeIn 0.3s ease-out;
+        }
+        
+        @keyframes bubbleFadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        /* 思考文字动画 */
+        .thinking-text {
+            font-size: 13px;
+            color: #6b7280;
+            margin-left: 8px;
+            animation: textPulse 2s infinite ease-in-out;
+        }
+        
+        @keyframes textPulse {
+            0%, 100% {
+                opacity: 0.6;
+            }
+            50% {
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 h-screen flex flex-col">
+    <!-- Header -->
+    <header class="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 z-10 shrink-0">
+        <h1 class="text-xl font-bold text-gray-800 flex items-center gap-2">
+            ✨ 视频号文案提取助手
+        </h1>
+    </header>
+
+    <!-- Chat Area -->
+    <div id="chat-container" class="flex-1 overflow-y-auto p-4 scroll-smooth">
+        <div id="messages-list" class="space-y-4 pb-4 max-w-4xl mx-auto">
+            <!-- Messages will be inserted here -->
+        </div>
+        
+        <div id="messages-end"></div>
+    </div>
+
+    <!-- Input Area -->
+    <div class="bg-white border-t border-gray-200 p-4 shrink-0">
+        <div class="max-w-3xl mx-auto relative">
+            <!-- Upload Progress Area -->
+            <div id="upload-status" class="upload-status-text">正在上传视频... 0%</div>
+            <div id="upload-progress-container" class="upload-progress-container">
+                <div id="upload-progress-bar" class="upload-progress-bar"></div>
+            </div>
+
+            <!-- Attachment Preview Area -->
+            <div id="attachment-list" class="flex flex-wrap gap-2 mb-2"></div>
+
+            <form id="chat-form" class="relative flex items-end gap-2 bg-gray-50 border border-gray-300 rounded-xl p-2 focus-within:ring-2 focus-within:ring-purple-500 focus-within:border-transparent transition-all">
+                <input type="file" id="file-input" accept="video/*" class="hidden">
+                <button
+                    type="button"
+                    id="upload-btn"
+                    class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 transition-colors mb-1 shrink-0"
+                >
+                    <i data-lucide="paperclip" class="w-5 h-5"></i>
+                </button>
+                <textarea
+                    id="chat-input"
+                    placeholder="输入你的需求或上传视频..."
+                    class="w-full bg-transparent border-none focus:outline-none resize-none max-h-32 min-h-[44px] py-3 px-2 text-gray-800 placeholder:text-gray-400"
+                    rows="1"
+                ></textarea>
+                <button
+                    type="submit"
+                    id="send-btn"
+                    disabled
+                    class="p-2 rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors mb-1 shrink-0"
+                >
+                    <i data-lucide="send" class="w-5 h-5"></i>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // ========== Coze API 配置 ==========
+        const COZE_CONFIG = {
+            accessToken: "pat_njYeNvNAgBz08OrQIlCztE89uBYQFS0t36JHeBzDpE3SCuSY8zslv5ywCWulELnN",
+            botId: "7593016536299028499",
+            apiUrl: "https://api.coze.cn/v3/chat",
+            uploadUrl: "https://api.coze.cn/v1/files/upload"
+        };
+
+        // 初始化 Lucide 图标
+        lucide.createIcons();
+
+        // 状态管理
+        const state = {
+            messages: [
+                {
+                    id: 'welcome',
+                    role: 'assistant',
+                    content: `您好！我是您的视频号文案提取助手。\n\n我可以帮您提取视频中的文案，并进行二次创作。请上传视频文件或发送视频链接给我。`
+                }
+            ],
+            attachments: [],
+            isLoading: false,
+            userId: getUserId(),
+            messageQueue: [],
+            isTyping: false,
+            lastProcessedIndex: 0,
+            currentMessageId: null,
+            currentMessageContent: ''
+        };
+
+        // DOM 元素
+        const messagesList = document.getElementById('messages-list');
+        const chatContainer = document.getElementById('chat-container');
+        const messagesEnd = document.getElementById('messages-end');
+        const chatForm = document.getElementById('chat-form');
+        const chatInput = document.getElementById('chat-input');
+        const sendBtn = document.getElementById('send-btn');
+        const fileInput = document.getElementById('file-input');
+        const uploadBtn = document.getElementById('upload-btn');
+        const attachmentList = document.getElementById('attachment-list');
+        const uploadProgressContainer = document.getElementById('upload-progress-container');
+        const uploadProgressBar = document.getElementById('upload-progress-bar');
+        const uploadStatusText = document.getElementById('upload-status');
+        
+        // 当前的思考指示器元素
+        let currentTypingIndicator = null;
+
+        // 获取或生成 User ID
+        function getUserId() {
+            let userId = localStorage.getItem('coze_user_id');
+            if (!userId) {
+                userId = 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                localStorage.setItem('coze_user_id', userId);
+            }
+            return userId;
+        }
+
+        // 渲染单条消息
+        function createMessageElement(msg) {
+            const isUser = msg.role === 'user';
+            
+            const wrapper = document.createElement('div');
+            wrapper.className = `flex w-full gap-4 p-4 ${isUser ? 'flex-row-reverse' : 'flex-row'}`;
+            wrapper.dataset.id = msg.id;
+
+            // Avatar
+            const avatar = document.createElement('div');
+            avatar.className = `flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${isUser ? 'bg-blue-500 text-white' : 'bg-purple-500 text-white'}`;
+            avatar.innerHTML = isUser 
+                ? '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-user"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
+                : '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-bot"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
+
+            // Content
+            const contentDiv = document.createElement('div');
+            contentDiv.className = `flex flex-col rounded-2xl px-5 py-4 shadow-sm overflow-hidden ${isUser 
+                ? 'max-w-[75%] bg-blue-500 text-white rounded-tr-none' 
+                : 'max-w-[95%] bg-white border border-gray-100 text-gray-800 rounded-tl-none'}`;
+            
+            const messageBody = document.createElement('div');
+            if (isUser) {
+                messageBody.className = 'whitespace-pre-wrap';
+                messageBody.textContent = msg.content;
+            } else {
+                messageBody.className = 'markdown-content';
+                // 对 AI 回复内容进行过滤，移除工具调用说明
+                const displayContent = typeof filterToolCallDescription === 'function' 
+                    ? filterToolCallDescription(msg.content) 
+                    : msg.content;
+                if (typeof marked !== 'undefined') {
+                     messageBody.innerHTML = marked.parse(displayContent);
+                } else {
+                     messageBody.textContent = displayContent;
+                }
+            }
+            
+            contentDiv.appendChild(messageBody);
+            wrapper.appendChild(avatar);
+            wrapper.appendChild(contentDiv);
+
+            return wrapper;
+        }
+
+        // 渲染所有消息
+        function renderMessages() {
+            messagesList.innerHTML = '';
+            state.messages.forEach(msg => {
+                messagesList.appendChild(createMessageElement(msg));
+            });
+            scrollToBottom();
+        }
+
+        // 更新最后一条消息
+        function updateLastMessage(content) {
+            const lastMsgIdx = state.messages.length - 1;
+            if (lastMsgIdx >= 0) {
+                state.messages[lastMsgIdx].content = content;
+                const lastMsgEl = messagesList.lastElementChild;
+                if (lastMsgEl) {
+                    const contentContainer = lastMsgEl.querySelector(state.messages[lastMsgIdx].role === 'user' ? '.whitespace-pre-wrap' : '.markdown-content');
+                    if (contentContainer) {
+                        if (state.messages[lastMsgIdx].role === 'user') {
+                            contentContainer.textContent = content;
+                        } else {
+                            // 对 AI 回复内容进行过滤，移除工具调用说明
+                            const filteredContent = filterToolCallDescription(content);
+                            if (typeof marked !== 'undefined') {
+                                contentContainer.innerHTML = marked.parse(filteredContent);
+                            } else {
+                                contentContainer.textContent = filteredContent;
+                            }
+                        }
+                    }
+                }
+                scrollToBottom();
+            }
+        }
+
+        function scrollToBottom() {
+            messagesEnd.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // 过滤掉工具调用说明文字
+        function filterToolCallDescription(text) {
+            // 匹配各种调用说明的模式
+            const patterns = [
+                // 匹配完整的调用说明（包括"不显示调用信息"等后续内容）
+                /用户提供了[^。]*调用\s*\S+\s*函数[^。]*。\s*/g,
+                // 匹配单独的调用函数说明
+                /调用\s*\S+\s*函数[^。]*[。，]\s*/g,
+                // 匹配"不显示调用信息"相关文字
+                /[，,]?\s*不显示调用信息[。，]?\s*/g,
+                // 匹配开头可能残留的部分
+                /^不显示调用信息[。，]?\s*/g
+            ];
+            let filtered = text;
+            patterns.forEach(pattern => {
+                filtered = filtered.replace(pattern, '');
+            });
+            return filtered.trim();
+        }
+
+        // 检测文本是否可能是调用说明的开头（用于流式输出时延迟显示）
+        function isPotentialToolCallStart(text) {
+            const startPatterns = [
+                /^用户提供了/,
+                /^调用\s*\S/,
+                /^不显示/
+            ];
+            return startPatterns.some(p => p.test(text.trim()));
+        }
+
+        // 检测调用说明是否已完整（以句号结尾且包含关键词）
+        function isToolCallComplete(text) {
+            return /调用\s*\S+\s*函数[^。]*。/.test(text) || 
+                   /不显示调用信息[。]/.test(text);
+        }
+
+        function adjustTextareaHeight() {
+            chatInput.style.height = 'auto';
+            chatInput.style.height = `${Math.min(chatInput.scrollHeight, 128)}px`;
+        }
+
+        function createTypingIndicator() {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'flex w-full gap-4 p-4 flex-row thinking-bubble';
+            wrapper.id = 'typing-indicator';
+            const avatar = document.createElement('div');
+            avatar.className = 'flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-purple-500 text-white';
+            avatar.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-bot"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'flex flex-col rounded-2xl px-5 py-4 shadow-sm bg-white border border-gray-100 text-gray-800 rounded-tl-none';
+            const typingContent = document.createElement('div');
+            typingContent.className = 'flex items-center';
+            typingContent.innerHTML = `
+                <div class="typing-indicator">
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                </div>
+                <span class="thinking-text">思考中...</span>
+            `;
+            contentDiv.appendChild(typingContent);
+            wrapper.appendChild(avatar);
+            wrapper.appendChild(contentDiv);
+            return wrapper;
+        }
+
+        function showTypingIndicator() {
+            removeTypingIndicator();
+            currentTypingIndicator = createTypingIndicator();
+            messagesList.appendChild(currentTypingIndicator);
+            scrollToBottom();
+        }
+
+        function removeTypingIndicator() {
+            if (currentTypingIndicator && currentTypingIndicator.parentNode) {
+                currentTypingIndicator.parentNode.removeChild(currentTypingIndicator);
+                currentTypingIndicator = null;
+            }
+        }
+
+        function findJsonEnd(str, startIndex) {
+            let braceCount = 0;
+            let inString = false;
+            let escaped = false;
+            for (let i = startIndex; i < str.length; i++) {
+                const char = str[i];
+                if (escaped) { escaped = false; continue; }
+                if (char === '\\') { escaped = true; continue; }
+                if (char === '"' && !escaped) { inString = !inString; continue; }
+                if (!inString) {
+                    if (char === '{') { braceCount++; }
+                    else if (char === '}') { braceCount--; if (braceCount === 0) return i + 1; }
+                }
+            }
+            return -1;
+        }
+
+        function processMessageContent(content) {
+            let currentIndex = state.lastProcessedIndex;
+            let eventDeltaIndex = content.indexOf('event:conversation.message.delta', currentIndex);
+            while (eventDeltaIndex !== -1) {
+                const nextEventDeltaIndex = content.indexOf('event:conversation.message.delta', eventDeltaIndex + 1);
+                const endEventDeltaIndex = nextEventDeltaIndex !== -1 ? nextEventDeltaIndex : content.length;
+                const dataString = content.substring(eventDeltaIndex, endEventDeltaIndex);
+                const dataPrefixIndex = dataString.indexOf('data:');
+                if (dataPrefixIndex !== -1) {
+                    const jsonStartIndex = dataPrefixIndex + 5;
+                    const jsonEndIndex = findJsonEnd(dataString, jsonStartIndex);
+                    if (jsonEndIndex !== -1) {
+                        try {
+                            const jsonString = dataString.substring(jsonStartIndex, jsonEndIndex);
+                            const dataObject = JSON.parse(jsonString);
+                            // 仅处理类型为 'answer' 的消息内容，过滤掉中间过程和工具调用说明
+                            if (dataObject.content && dataObject.type === 'answer') {
+                                const messageId = dataObject.id || 'default';
+                                state.messageQueue.push({ content: dataObject.content, messageId });
+                            }
+                            currentIndex = eventDeltaIndex + jsonEndIndex;
+                        } catch (error) { currentIndex = eventDeltaIndex + dataString.length; }
+                    } else { break; }
+                } else { currentIndex = eventDeltaIndex + dataString.length; }
+                eventDeltaIndex = nextEventDeltaIndex;
+            }
+            const eventDoneIndex = content.indexOf('event:done');
+            if (eventDoneIndex !== -1) { state.lastProcessedIndex = 0; return; }
+            state.lastProcessedIndex = currentIndex;
+            processQueue();
+        }
+
+        function processQueue() {
+            if (!state.isTyping && state.messageQueue.length > 0) {
+                state.isTyping = true;
+                const message = state.messageQueue.shift();
+                typeMessage(message.content, message.messageId);
+            }
+        }
+
+        // 用于缓冲可能的调用说明
+        let pendingToolCallBuffer = '';
+        let isBufferingToolCall = false;
+
+        function typeMessage(content, messageId) {
+            if (state.currentMessageId !== messageId) {
+                state.currentMessageId = messageId;
+                state.currentMessageContent = '';
+                pendingToolCallBuffer = '';
+                isBufferingToolCall = false;
+                const newMsgId = messageId || Date.now().toString();
+                state.messages.push({ id: newMsgId, role: 'assistant', content: '' });
+                messagesList.appendChild(createMessageElement(state.messages[state.messages.length - 1]));
+                scrollToBottom();
+            }
+
+            // 累积内容
+            const newContent = state.currentMessageContent + content;
+            
+            // 检测是否需要缓冲（可能是调用说明的开头）
+            if (!isBufferingToolCall && isPotentialToolCallStart(newContent)) {
+                isBufferingToolCall = true;
+                pendingToolCallBuffer = newContent;
+            } else if (isBufferingToolCall) {
+                pendingToolCallBuffer += content;
+                
+                // 检查缓冲的内容是否已经可以确定是调用说明并已完整
+                if (isToolCallComplete(pendingToolCallBuffer)) {
+                    // 调用说明已完整，过滤后更新
+                    state.currentMessageContent = pendingToolCallBuffer;
+                    updateLastMessage(state.currentMessageContent);
+                    isBufferingToolCall = false;
+                    pendingToolCallBuffer = '';
+                } else if (pendingToolCallBuffer.length > 150) {
+                    // 缓冲太长但没检测到完整的调用说明，可能不是调用说明，直接显示
+                    state.currentMessageContent = pendingToolCallBuffer;
+                    updateLastMessage(state.currentMessageContent);
+                    isBufferingToolCall = false;
+                    pendingToolCallBuffer = '';
+                }
+                // 否则继续缓冲，不更新显示
+            } else {
+                // 正常情况，直接更新
+                state.currentMessageContent = newContent;
+                updateLastMessage(state.currentMessageContent);
+            }
+
+            state.isTyping = false;
+            processQueue();
+        }
+
+        // 渲染附件预览
+        function renderAttachments() {
+            attachmentList.innerHTML = '';
+            state.attachments.forEach((file, index) => {
+                const div = document.createElement('div');
+                div.className = 'attachment-preview';
+                div.innerHTML = `
+                    <i data-lucide="video" class="w-4 h-4 text-purple-600"></i>
+                    <span class="truncate max-w-[150px]">${file.name}</span>
+                    <button type="button" onclick="removeAttachment(${index})">
+                        <i data-lucide="x" class="w-4 h-4"></i>
+                    </button>
+                `;
+                attachmentList.appendChild(div);
+            });
+            lucide.createIcons();
+            updateSendBtnState();
+        }
+
+        // 移除附件
+        window.removeAttachment = function(index) {
+            state.attachments.splice(index, 1);
+            renderAttachments();
+        };
+
+        // 更新发送按钮状态
+        function updateSendBtnState() {
+            sendBtn.disabled = !chatInput.value.trim() && state.attachments.length === 0;
+        }
+
+        // 处理文件上传
+        function handleFileUpload(file) {
+            if (!file) return;
+            
+            const formData = new FormData();
+            formData.append('file', file);
+
+            // 显示进度条和状态
+            uploadProgressContainer.style.display = 'block';
+            uploadStatusText.style.display = 'block';
+            uploadProgressBar.style.width = '0%';
+            uploadStatusText.textContent = `正在准备上传: ${file.name}...`;
+
+            const xhr = new XMLHttpRequest();
+
+            // 监听上传进度
+            xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable) {
+                    const percentComplete = Math.round((e.loaded / e.total) * 100);
+                    uploadProgressBar.style.width = percentComplete + '%';
+                    uploadStatusText.textContent = `正在上传视频: ${percentComplete}%`;
+                }
+            });
+
+            xhr.addEventListener('load', () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    try {
+                        const result = JSON.parse(xhr.responseText);
+                        if (result.code === 0) {
+                            state.attachments.push({
+                                id: result.data.id,
+                                name: file.name,
+                                type: 'file'
+                            });
+                            renderAttachments();
+                            uploadStatusText.textContent = '上传成功！';
+                            setTimeout(() => {
+                                uploadProgressContainer.style.display = 'none';
+                                uploadStatusText.style.display = 'none';
+                            }, 1000);
+                        } else {
+                            throw new Error(result.msg || '文件上传失败');
+                        }
+                    } catch (error) {
+                        handleUploadError(error);
+                    }
+                } else {
+                    handleUploadError(new Error(`上传失败: ${xhr.status}`));
+                }
+            });
+
+            xhr.addEventListener('error', () => {
+                handleUploadError(new Error('网络错误，上传失败'));
+            });
+
+            xhr.addEventListener('loadend', () => {
+                uploadBtn.disabled = false;
+                uploadBtn.innerHTML = '<i data-lucide="paperclip" class="w-5 h-5"></i>';
+                lucide.createIcons();
+            });
+
+            xhr.open('POST', COZE_CONFIG.uploadUrl);
+            xhr.setRequestHeader('Authorization', `Bearer ${COZE_CONFIG.accessToken}`);
+            xhr.send(formData);
+
+            uploadBtn.disabled = true;
+            uploadBtn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin text-purple-600"></i>';
+            lucide.createIcons();
+        }
+
+        function handleUploadError(error) {
+            console.error('上传失败:', error);
+            uploadStatusText.textContent = '上传失败: ' + error.message;
+            uploadProgressBar.style.backgroundColor = '#ef4444';
+            setTimeout(() => {
+                uploadProgressContainer.style.display = 'none';
+                uploadStatusText.style.display = 'none';
+                uploadProgressBar.style.backgroundColor = ''; // 重置颜色
+            }, 3000);
+            alert('文件上传失败: ' + error.message);
+        }
+
+        async function handleSubmit(e) {
+            if (e) e.preventDefault();
+            
+            const content = chatInput.value.trim();
+            if ((!content && state.attachments.length === 0) || state.isLoading) return;
+
+            state.currentMessageId = null;
+            state.currentMessageContent = '';
+            state.messageQueue = [];
+            state.lastProcessedIndex = 0;
+
+            // 构建发送给用户看的消息内容（包含文件名）
+            let displayContent = content;
+            if (state.attachments.length > 0) {
+                const fileNames = state.attachments.map(a => `[视频: ${a.name}]`).join(' ');
+                displayContent = displayContent ? `${displayContent}\n${fileNames}` : fileNames;
+            }
+
+            state.messages.push({
+                id: Date.now().toString(),
+                role: 'user',
+                content: displayContent
+            });
+            renderMessages();
+
+            // 准备发送给 Coze API 的内容
+            let additionalMessages = [];
+            
+            // 处理当前发送的内容和附件
+            let currentMsgContent = [];
+            if (content) {
+                currentMsgContent.push({ type: 'text', text: content });
+            }
+            state.attachments.forEach(att => {
+                currentMsgContent.push({ type: 'file', file_id: att.id });
+            });
+
+            // 历史消息
+            const history = state.messages.slice(1, -1).map(m => ({
+                role: m.role,
+                content: m.content,
+                content_type: 'text'
+            }));
+
+            additionalMessages = [...history, {
+                role: 'user',
+                content: JSON.stringify(currentMsgContent),
+                content_type: 'object_string'
+            }];
+
+            chatInput.value = '';
+            const savedAttachments = [...state.attachments];
+            state.attachments = [];
+            renderAttachments();
+            adjustTextareaHeight();
+            sendBtn.disabled = true;
+            
+            state.isLoading = true;
+            showTypingIndicator();
+
+            try {
+                const response = await fetch(COZE_CONFIG.apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${COZE_CONFIG.accessToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        bot_id: COZE_CONFIG.botId,
+                        user_id: state.userId,
+                        additional_messages: additionalMessages,
+                        stream: true,
+                        auto_save_history: true
+                    })
+                });
+
+                if (!response.ok) throw new Error(`API请求失败: ${response.status}`);
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let messageContent = '';
+                let hasReceivedFirstContent = false;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    messageContent += decoder.decode(value, { stream: true });
+                    if (!hasReceivedFirstContent && messageContent.includes('event:conversation.message.delta') && messageContent.includes('"content"')) {
+                        hasReceivedFirstContent = true;
+                        removeTypingIndicator();
+                    }
+                    if (hasReceivedFirstContent) {
+                        processMessageContent(messageContent);
+                    }
+                }
+
+                // 流式传输结束后，处理可能还在缓冲中的内容
+                if (isBufferingToolCall && pendingToolCallBuffer) {
+                    state.currentMessageContent = pendingToolCallBuffer;
+                    updateLastMessage(state.currentMessageContent);
+                    isBufferingToolCall = false;
+                    pendingToolCallBuffer = '';
+                }
+            } catch (error) {
+                console.error('请求异常:', error);
+                removeTypingIndicator();
+                const lastMsg = state.messages[state.messages.length - 1];
+                if (!lastMsg || lastMsg.role !== 'assistant') {
+                    state.messages.push({ id: (Date.now() + 1).toString(), role: 'assistant', content: `请求失败: ${error.message || '未知错误'}` });
+                    renderMessages();
+                } else {
+                    updateLastMessage(`请求失败: ${error.message || '未知错误'}`);
+                }
+            } finally {
+                state.isLoading = false;
+                removeTypingIndicator();
+            }
+        }
+
+        chatInput.addEventListener('input', () => {
+            adjustTextareaHeight();
+            updateSendBtnState();
+        });
+
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSubmit();
+            }
+        });
+
+        chatForm.addEventListener('submit', handleSubmit);
+        
+        uploadBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                handleFileUpload(file);
+                fileInput.value = ''; // 重置以允许再次选择同一文件
+            }
+        });
+
+        renderMessages();
+    </script>
+</body>
+</html>
