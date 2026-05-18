@@ -7,7 +7,7 @@ const https = require('https');
 const PORT = 3000;
 const COZE_API_URL = 'https://api.coze.cn/v3/chat';
 // 默认 Token 和 Bot ID
-const ACCESS_TOKEN = process.env.COZE_ACCESS_TOKEN || 'pat_R6bcOPXXhD04Zqo8Jc1L22y8BL2I0yKLq1KnoXpAZ0UbUkUcRb9vvB3NFTEb8TBW';
+const ACCESS_TOKEN = process.env.COZE_ACCESS_TOKEN || 'pat_J6Muq3cEbbQmjni9ChtKgYo8qQ3IjvgVDa8fOxf81oj0WppLElQd89UP8dOZUyUk';
 const BOT_ID = process.env.COZE_BOT_ID || '7593016536299028499';
 
 const server = http.createServer(async (req, res) => {
